@@ -1,0 +1,670 @@
+    <!DOCTYPE html>
+    <html lang="zh-TW">
+    <head>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <title>雅玲專業象棋 - 精準修正版</title>
+        <style>
+            body { background: #1a1a1a; color: white; text-align: center; font-family: "KaiTi", serif; margin: 0; overflow: hidden; }
+            #game-container { display: none; flex-direction: column; align-items: center; justify-content: flex-start; height: 100vh; padding-top: 1px; position: relative; }
+            #fx-overlay { position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 1000; font-size: 80px; font-weight: bold; text-shadow: 0 0 30px black; display: none; color: #ff5722; }
+            #end-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 2000; }
+            /* 基礎結構：控制大小與形狀 */
+            
+            @keyframes flip-shake {
+        0% { transform: scale(1) rotate(0deg); }
+        50% { transform: scale(1.4) rotate(180deg); filter: brightness(1.5); }
+        100% { transform: scale(1) rotate(360deg); }
+    }
+    
+    /* 讓棋子翻轉變大的動畫 */
+    @keyframes flip-eat {
+        0% { transform: scale(1) rotate(0deg); }
+        50% { transform: scale(1.6) rotate(180deg); filter: brightness(1.5); }
+        100% { transform: scale(1) rotate(360deg); }
+    }
+    
+    /* 當程式碼偵測到吃子時，會幫格子加上這個類別 */
+    .eat-animation {
+        animation: flip-eat 0.6s ease-in-out;
+        z-index: 1000 !important; /* 確保轉動時不會被隔壁格子遮住 */
+        position: relative;
+    }
+    
+    .eat-effect {
+        animation: flip-shake 0.6s ease-in-out;
+        z-index: 999;
+    }
+    .timer {
+        padding: 5px 2px;
+        border-radius: 8px;
+        font-size: 16px;
+        font-weight: bold;
+        text-align: center;
+        min-width: 80px;
+        
+    }
+    
+    /* 上方時鐘：深藍色 (對手) */
+    #timer-top {
+        background: #0D47A1;      /* 深藍底色 */
+        color: #FFFFFF;           /* 白色文字 */
+        border: 2px solid #1976D2; /* 藍色邊框 */
+    }
+    
+    /* 下方時鐘：深紅色 (我方) */
+    #timer-bottom {
+        background: #B71C1C;      /* 深紅底色 */
+        color: #FFFFFF;           /* 白色文字 */
+        border: 2px solid #E53935; /* 紅色邊框 */
+    }
+    
+    /* 當輪到某人時，會覆蓋原本顏色變成亮橘色，提醒憶嫻該動手了 */
+    .timer.active {
+        background-color: #FF9800 !important; 
+        color: #000000 !important;
+        box-shadow: 0 0 15px #FF9800;
+        border: 2px solid #FFFFFF !important;
+    }
+    
+    /* 特別注意：要把你原本 JavaScript 裡產生 connInfo 的那段代碼刪掉 */
+            canvas { background: #eec170; border: 5px solid #5d3410; touch-action: none; cursor: pointer; }
+            button { padding: 10px 20px; font-size: 9px; border-radius: 8px; cursor: pointer; font-weight: bold; border: 1px solid white; color: white; background: #607d8b; }
+            #edit-panel { display: none; background: #333; padding: 10px; border-radius: 10px; margin-top: 5px; width: 95%; max-width: 600px; }
+            .login-box { background: #333; padding: 30px; border-radius: 20px; border: 2px solid #555; }
+        </style>
+    </head>
+    <body>
+    
+    <div id="fx-overlay"></div>
+    <div id="end-screen">
+        <h1 id="result-text" style="font-size: 60px; color: #ffeb3b;"></h1>
+        <button onclick="location.reload()" style="background: #4caf50; font-size: 30px;">重新開始新局</button>
+    </div>
+    
+    <div id="login-screen" style="height:100vh; display:flex; flex-direction:column; justify-content:center; align-items:center;">
+        <h1 class="bouncing-title">❤️ 雅玲專業象棋 ❤️</h1>
+    
+    <style>
+        .bouncing-title {
+            color: #ff69b4;
+            font-size: 40px;
+            text-shadow: 0 0 10px rgba(255, 105, 180, 0.8);
+            animation: bounce 1.5s infinite ease-in-out; /* 這裡控制跳動 */
+            display: inline-block;
+        }
+    
+        @keyframes bounce {
+            0%, 100% {
+                transform: translateY(0) scale(1);
+                text-shadow: 0 0 10px rgba(255, 105, 180, 0.8);
+            }
+            50% {
+                transform: translateY(-20px) scale(1.1); /* 向上跳 20 像素並稍微放大 */
+                text-shadow: 0 0 30px rgba(255, 105, 180, 1); /* 跳起時光芒更亮 */
+                color: #ff1493;
+            }
+        }
+    </style>
+        <div class="login-box">
+            <input type="password" id="pwd-input" placeholder="密碼 = 生日" style="padding:10px; font-size:18px; text-align:center;"><br><br>
+            <label>時間限制：</label>
+            <select id="time-select" style="padding:5px; font-size:18px;">
+                <option value="1">1 分鐘</option>
+                <option value="10">10 分鐘</option>
+                <option value="30">30 分鐘</option>
+                <option value="999">不限時</option>
+            </select><br><br>
+            <button onclick="selectRole('R')" style="background:#d32f2f; margin-right:10px;">選紅方</button>
+            <button onclick="selectRole('B')" style="background:#333;">選黑方</button>
+        </div>
+    </div>
+    
+     
+    
+    
+    <div id="game-container">
+        <div style="display:flex; justify-content: space-between; align-items: center; width: 95%; max-width: 500px; margin: 5px auto; gap: 5px;">
+            
+            <div style="flex: 2; text-align: left; background: rgba(255,255,255,0.1); padding: 5px; border-radius: 5px;">
+                <div style="font-size: 12px; color: #ffeb3b;">
+                    我的 ID: <b id="display-id">讀取中...</b>
+                </div>
+                <div id="conn-status" style="font-size: 10px; color: #00ff00; height: 12px;"></div>
+                
+                <div style="display: flex; gap: 2px; margin-top: 2px;">
+                    <input type="text" id="friend-id" placeholder="貼上ID" style="width: 70px; font-size: 11px;">
+                    <button onclick="connectToFriend()" style="padding: 2px 5px; font-size: 11px; background: #4caf50;">連線</button>
+                </div>
+            </div>
+    
+            <div id="timer-top" class="timer" style="flex: 1; min-width: 80px;">
+                <div style="font-size: 10px;">對手</div>
+                <div id="time-top-txt">--:--</div>
+            </div>
+    
+            <div id="timer-bottom" class="timer" style="flex: 1; min-width: 80px;">
+                <div style="font-size: 10px;">我方</div>
+                <div id="time-bottom-txt">--:--</div>
+            </div>
+        </div>
+    
+        <canvas id="chessBoard"></canvas><div class="controls" style="margin-top:1px; display:flex; gap:5px;">
+        <button id="edit-btn" onclick="toggleEditMode()" 
+                style="background:#9c27b0; padding: 1px 8px; font-size: 13px; border-radius: 4px;">🔧 擺設</button>
+        <button onclick="resign()" 
+                style="background:#d32f2f; padding: 1px 8px; font-size: 13px; border-radius: 4px;">🏳️ 認輸</button>
+                <button onclick="offerDraw()"
+            style="background:#f57c00; padding: 1px 8px; font-size: 13px; border-radius: 4px;">🤝 和棋</button>
+    </div>
+    
+    <div id="edit-panel" style="margin-top: 5px; background: rgba(0,0,0,0.3); padding: 5px; border-radius: 6px;">
+        <select id="piece-select" style="padding:2px; font-size: 13px;">
+            <optgroup label="紅方"><option value="K">帥</option><option value="R">車</option><option value="C">炮</option><option value="N">馬</option><option value="B">相</option><option value="A">仕</option><option value="P">兵</option></optgroup>
+            <optgroup label="黑方"><option value="k">將</option><option value="r">車</option><option value="c">炮</option><option value="n">馬</option><option value="b">象</option><option value="a">士</option><option value="p">卒</option></optgroup>
+            <option value="delete">❌ 刪除</option>
+        </select>
+        <button onclick="classicBoard()" style="background:#4caf50; padding: 3px 6px; font-size: 12px;">還原</button>
+        <button onclick="clearBoard()" style="background:#f44336; padding: 3px 6px; font-size: 12px;">清空</button>
+    </div>
+    
+    
+    <div id="chat-box" style="width: 95%; max-width: 500px; background: rgba(0,0,0,0.5); border-radius: 8px; margin-top: 1px; display: flex; flex-direction: column; overflow: hidden;">
+        <div id="chat-messages" style="height: 60px; overflow-y: auto; text-align: left; padding: 5px; font-size: 14px; border-bottom: 1px solid #444; color: #fff;">
+            </div>
+        
+        <div id="chat-controls" style="display: flex;">
+            <input type="text" id="chat-input" placeholder="成功連線就可以聊天和打屁屁😂" 
+                   style="flex: 1; padding: 10px; border: none; background: #222; color: white; outline: none;">
+            <button onclick="sendChatMessage()" 
+                    style="background: #4caf50; border: none; padding: 1px 20px; color: white; cursor: pointer; font-weight: bold;">
+                傳送
+            </button>
+        </div>
+    </div>
+        
+    
+    <script>
+        // --- 1. 遊戲核心變數 ---
+        const canvas = document.getElementById('chessBoard'), ctx = canvas.getContext('2d');
+        const fx = document.getElementById('fx-overlay');
+        let gridSize, mode = 'play', selected = null, turn = 'R', gameOver = false, myRole = 'R';
+        let timeLeft = { R: 600, B: 600 }, timerInterval = null;
+        const pieceText = { 'r':'車','n':'馬','b':'象','a':'士','k':'將','c':'炮','p':'卒','R':'車','N':'馬','B':'相','A':'仕','K':'帥','C':'炮','P':'兵' };
+        let board = [];
+    
+        // --- 2. 音效 ---
+        const aCtx = new (window.AudioContext||window.webkitAudioContext)();
+      function playSound(type) {
+        if(aCtx.state==='suspended') aCtx.resume();
+        const o = aCtx.createOscillator(), g = aCtx.createGain(), now = aCtx.currentTime;
+        o.connect(g); g.connect(aCtx.destination);
+        
+        if(type==='move'){ o.frequency.setValueAtTime(300, now); g.gain.setValueAtTime(0.3, now); o.start(); o.stop(now+0.05); }
+        if(type==='cap'){ o.type='square'; o.frequency.setValueAtTime(150, now); g.gain.setValueAtTime(0.0, now); o.start(); o.stop(now+0.1); }
+        if(type==='check'){ [600, 400].forEach((f, i) => { const o2=aCtx.createOscillator(); o2.connect(g); o2.frequency.setValueAtTime(f, now+i*0.1); o2.start(now+i*0.1); o2.stop(now+i*0.1+0.1); }); }
+        
+        // --- 新增：專屬結束音樂 ---
+        if(type==='victory'){ 
+            const notes = [523.25, 659.25, 783.99, 1046.50]; // C-E-G-C 高音和弦
+            notes.forEach((f, i) => { 
+                const o2 = aCtx.createOscillator();
+                const g2 = aCtx.createGain();
+                o2.connect(g2);
+                g2.connect(aCtx.destination);
+                o2.type = 'triangle'; // 使用較柔和的三角形波
+                o2.frequency.setValueAtTime(f, now + i * 0.1); 
+                g2.gain.setValueAtTime(0.9, now + i * 0.1);
+                g2.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.1 + 0.8);
+                o2.start(now + i * 0.1);
+                o2.stop(now + i * 0.1 + 0.8); 
+            }); 
+        }
+    }
+    
+        // --- 3. 登入與初始化 ---
+        function selectRole(role) {
+            if(document.getElementById('pwd-input').value !== '0129') return alert("密碼錯誤");
+            myRole = role;
+            document.getElementById('login-screen').style.display = 'none';
+            document.getElementById('game-container').style.display = 'flex';
+            let setTime = parseInt(document.getElementById('time-select').value) * 60;
+            timeLeft.R = timeLeft.B = setTime;
+            classicBoard(); initCanvas(); startTimer();
+        }
+    
+        function initCanvas() {
+            let w = window.innerWidth * 0.95, h = window.innerHeight * 0.65;
+            gridSize = Math.min(w/9, h/10);
+            canvas.width = gridSize * 9; canvas.height = gridSize * 10;
+            draw();
+        }
+    
+        function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = '#5d3410'; ctx.lineWidth = 2;
+        const off = gridSize/2;
+    
+        // --- (這段畫線條的程式碼不用動，保持原樣) ---
+        for(let j=0; j<10; j++) { ctx.beginPath(); ctx.moveTo(off, j*gridSize+off); ctx.lineTo(8*gridSize+off, j*gridSize+off); ctx.stroke(); }
+        for(let i=0; i<9; i++) { ctx.beginPath(); if(i===0 || i===8) { ctx.moveTo(i*gridSize+off, off); ctx.lineTo(i*gridSize+off, 9*gridSize+off); } else { ctx.moveTo(i*gridSize+off, off); ctx.lineTo(i*gridSize+off, 4*gridSize+off); ctx.moveTo(i*gridSize+off, 5*gridSize+off); ctx.lineTo(i*gridSize+off, 9*gridSize+off); } ctx.stroke(); }
+        const drawX = (yS, yE) => { ctx.beginPath(); ctx.moveTo(3*gridSize+off, yS*gridSize+off); ctx.lineTo(5*gridSize+off, yE*gridSize+off); ctx.stroke(); ctx.beginPath(); ctx.moveTo(5*gridSize+off, yS*gridSize+off); ctx.lineTo(3*gridSize+off, yE*gridSize+off); ctx.stroke(); };
+        drawX(0, 2); drawX(7, 9);
+        const drawMarker = (x, y) => { const g = gridSize*0.1, l = gridSize*0.2, cx = x*gridSize+off, cy = y*gridSize+off; [[-1,-1], [1,-1], [-1,1], [1,1]].forEach(p => { if ((p[0]===-1 && x>0) || (p[0]===1 && x<8)) { ctx.beginPath(); ctx.moveTo(cx+p[0]*g, cy+p[1]*g); ctx.lineTo(cx+p[0]*(g+l), cy+p[1]*g); ctx.stroke(); ctx.beginPath(); ctx.moveTo(cx+p[0]*g, cy+p[1]*g); ctx.lineTo(cx+p[0]*g, cy+p[1]*(g+l)); ctx.stroke(); } }); };
+        [1, 7].forEach(x => [2, 7].forEach(y => drawMarker(x, y)));
+        [0, 2, 4, 6, 8].forEach(x => [3, 6].forEach(y => drawMarker(x, y)));
+        ctx.fillStyle = '#5d3410'; ctx.font = `bold ${gridSize*0.5}px "KaiTi"`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText("擁 抱  太 陽", 2*gridSize+off, 4.5*gridSize+off); ctx.fillText("雅 玲  姐 姐", 6*gridSize+off, 4.5*gridSize+off);
+    
+        // --- 畫棋子 (這裡是被大幅修改的重點) ---
+        for(let ly=0; ly<10; ly++) for(let lx=0; lx<9; lx++) {
+            let p = board[ly][lx]; if(p === '.') continue;
+            
+            let dx = (myRole === 'B') ? 8 - lx : lx;
+            let dy = (myRole === 'B') ? 9 - ly : ly;
+            let cx = dx*gridSize+off;
+            let cy = dy*gridSize+off;
+            let isR = (p === p.toUpperCase());
+    
+            // 1. 保存現在的畫筆狀態
+            ctx.save();
+            
+            // 2. 移動畫布中心點到這顆棋子的位置
+            ctx.translate(cx, cy);
+    
+            // 3. 如果這顆棋子正在動畫中，就對它進行縮放和旋轉
+            if (animatingPiece && animatingPiece.lx === lx && animatingPiece.ly === ly) {
+                let s = animatingPiece.scale; 
+                let r = animatingPiece.rotate;
+                ctx.scale(s, s);     // 變大
+                ctx.rotate(r);       // 旋轉
+            }
+    
+            // 4. 畫圓和字 (注意：因為已經 translate，所以圓心座標變成 0,0)
+            ctx.beginPath(); 
+            ctx.arc(0, 0, gridSize*0.43, 0, Math.PI*2); 
+            ctx.fillStyle = '#f9dfbc'; ctx.fill();
+            ctx.strokeStyle = isR ? '#d00' : '#000'; ctx.lineWidth = 2; ctx.stroke();
+            ctx.fillStyle = isR ? '#d00' : '#000'; 
+            ctx.font = `bold ${gridSize*0.55}px "KaiTi"`; 
+            ctx.fillText(pieceText[p], 0, gridSize*0.05);
+    
+            // 5. 恢復畫筆狀態 (避免影響下一顆棋子)
+            ctx.restore();
+    
+            // 畫選取框
+            if(selected && selected.lx===lx && selected.ly===ly) { 
+                ctx.strokeStyle='#00f'; ctx.lineWidth=4; 
+                ctx.strokeRect(cx-gridSize*0.48, cy-gridSize*0.48, gridSize*0.96, gridSize*0.96); 
+            }
+        }
+    }
+    
+        // --- 4. 移動規則與幾何判定 ---
+        function canMoveGeom(p, x1, y1, x2, y2, b) {
+            let dx = Math.abs(x2-x1), dy = Math.abs(y2-y1), type = p.toLowerCase(), target = b[y2][x2];
+            if(target !== '.' && (target === target.toUpperCase()) === (p === p.toUpperCase())) return false;
+            const cnt = (x1,y1,x2,y2,b) => {
+                let c=0; if(x1===x2) for(let i=Math.min(y1,y2)+1; i<Math.max(y1,y2); i++) { if(b[i][x1]!=='.') c++; }
+                else for(let i=Math.min(x1,x2)+1; i<Math.max(x1,x2); i++) { if(b[y1][i]!=='.') c++; } return c;
+            };
+            switch(type) {
+                case 'r': return (x1===x2 || y1===y2) && cnt(x1,y1,x2,y2,b)===0;
+                case 'c': if(x1!==x2 && y1!==y2) return false; let c = cnt(x1,y1,x2,y2,b); return target==='.' ? c===0 : c===1;
+                case 'n': return ((dx===1&&dy===2)||(dx===2&&dy===1)) && b[dy===2?y1+(y2-y1)/2:y1][dx===2?x1+(x2-x1)/2:x1]==='.';
+                case 'b': return dx===2&&dy===2&&(p==='B'?y2>=5:y2<=4) && b[(y1+y2)/2][(x1+x2)/2]==='.';
+                case 'a': return dx===1&&dy===1&&x2>=3&&x2<=5&&(p==='A'?y2>=7:y2<=9)&&(p==='a'?y2<=2:true);
+                case 'k': if(dx+dy===1 && x2>=3 && x2<=5 && (p==='K'?y2>=7:y2<=9) && (p==='k'?y2<=2:true)) return true;
+                           return (x1===x2 && target.toLowerCase()==='k' && cnt(x1,y1,x2,y2,b)===0);
+                case 'p': if(dx+dy!==1) return false;
+                          if(p==='P') return y2<=y1 && (y1>=5 ? x1===x2 : true);
+                          return y2>=y1 && (y1<=4 ? x1===x2 : true);
+            }
+            return false;
+        }
+    
+        // --- 5. 安全檢查 (修正防呆) ---
+        function isKingSafe(color, b) {
+            let kPos = null, myKing = (color==='R'?'K':'k');
+            for(let y=0; y<10; y++) for(let x=0; x<9; x++) if(b[y][x]===myKing) { kPos={x,y}; break; }
+            if(!kPos) return false; // 找不到將帥，直接視為不安全
+            for(let y=0; y<10; y++) for(let x=0; x<9; x++) {
+                let p = b[y][x]; if(p!=='.' && (p===p.toUpperCase())!==(color==='R')) 
+                    if(canMoveGeom(p, x, y, kPos.x, kPos.y, b)) return false;
+            }
+            return true;
+        }
+    
+      // --- 6. 點擊事件 (修正版：支援擺譜模式移動) ---
+    canvas.addEventListener('mousedown', e => {
+        if (gameOver) return;
+        const rect = canvas.getBoundingClientRect();
+        let vx = Math.floor((e.clientX - rect.left) / gridSize);
+        let vy = Math.floor((e.clientY - rect.top) / gridSize);
+        
+        let lx = (myRole === 'B') ? 8 - vx : vx;
+        let ly = (myRole === 'B') ? 9 - vy : vy;
+    
+        if (lx < 0 || lx > 8 || ly < 0 || ly > 9) return;
+    
+        // --- 新增：擺譜模式的邏輯 ---
+        if (mode === 'edit') {
+            let t = document.getElementById('piece-select').value;
+            if (t === 'delete') {
+                board[ly][lx] = '.';
+            } else {
+                board[ly][lx] = t;
+            }
+            draw();
+            return; // 擺譜模式到此結束，不執行下方的遊戲規則檢查
+        }
+    
+        // --- 以下為正常對戰模式的邏輯 ---
+        if (selected) {
+            let p = selected.p;
+            let oldTarget = board[ly][lx];
+    
+            if (canMoveGeom(p, selected.lx, selected.ly, lx, ly, board)) {
+                // 模擬移動檢查安全性
+                board[ly][lx] = p;
+                board[selected.ly][selected.lx] = '.';
+                let safe = isKingSafe(turn, board);
+                
+                // 還原狀態交由 executeMove 正式處理
+                board[selected.ly][selected.lx] = p;
+                board[ly][lx] = oldTarget;
+    
+                if (safe) {
+                    if (globalConn && globalConn.open) {
+                        globalConn.send({ 
+                            type: 'move', 
+                            move: [selected.lx, selected.ly, lx, ly], 
+                            time: timeLeft 
+                        });
+                    }
+                    executeMove(selected.lx, selected.ly, lx, ly);
+                    selected = null;
+                } else {
+                    alert("不行！這樣會被將軍喔！😱");
+                    selected = null;
+                    draw();
+                }
+            } else {
+                // 切換選取棋子
+                let targetP = board[ly][lx];
+                if (targetP !== '.' && (targetP === targetP.toUpperCase()) === (turn === 'R') && turn === myRole) {
+                    selected = { lx, ly, p: targetP };
+                    draw();
+                } else {
+                    selected = null;
+                    draw();
+                }
+            }
+        } else {
+            // 選取棋子
+            let p = board[ly][lx];
+            if (p !== '.' && (p === p.toUpperCase()) === (turn === 'R') && turn === myRole) {
+                selected = { lx, ly, p };
+                draw();
+            }
+        }
+    });
+        // --- 7. 遊戲狀態檢查 (修正勝負判定) ---
+        function checkGameState() {
+            let inCheck = !isKingSafe(turn, board);
+            if(inCheck) { fx.innerText="將 軍"; fx.style.display='block'; setTimeout(()=>fx.style.display='none',1000); playSound('check'); }
+            
+            let hasMove = false;
+            for(let y1=0; y1<10; y1++) for(let x1=0; x1<9; x1++) {
+                let p = board[y1][x1]; 
+                if(p!=='.' && (p===p.toUpperCase())===(turn==='R')) {
+                    for(let y2=0; y2<10; y2++) for(let x2=0; x2<9; x2++) {
+                        if(canMoveGeom(p, x1, y1, x2, y2, board)) {
+                            let old = board[y2][x2]; board[y2][x2]=p; board[y1][x1]='.';
+                            let safe = isKingSafe(turn, board); board[y1][x1]=p; board[y2][x2]=old;
+                            if(safe) { hasMove=true; break; }
+                        }
+                    }
+                }
+                if(hasMove) break;
+            }
+            if(!hasMove) endGame(inCheck ? "將 殺" : "困 斃");
+        }
+    
+        // --- 8. 結束遊戲 (修正參數) ---
+        function endGame(r, forceWinner) { 
+        // 無論什麼形式結束，先放音樂
+        playSound('victory'); 
+    
+        gameOver = true; 
+        clearInterval(timerInterval); 
+        
+        let winner = forceWinner ? forceWinner : (turn === 'R' ? "黑方勝" : "紅方勝");
+        document.getElementById('result-text').innerText = r + "！" + winner; 
+        document.getElementById('end-screen').style.display = 'flex'; 
+    }
+    
+        // --- 9. 輔助功能 ---
+        function classicBoard() { board=[['r','n','b','a','k','a','b','n','r'],['.','.','.','.','.','.','.','.','.'],['.','c','.','.','.','.','.','c','.'],['p','.','p','.','p','.','p','.','p'],['.','.','.','.','.','.','.','.','.'],['.','.','.','.','.','.','.','.','.'],['P','.','P','.','P','.','P','.','P'],['.','C','.','.','.','.','.','C','.'],['.','.','.','.','.','.','.','.','.'],['R','N','B','A','K','A','B','N','R']]; draw(); }
+        function clearBoard() { board=Array(10).fill().map(()=>Array(9).fill('.')); draw(); }
+        function startTimer() { timerInterval=setInterval(()=>{ if(!gameOver && mode==='play' && timeLeft[turn]>0) { timeLeft[turn]--; updateTimerUI(); if(timeLeft[turn]<=0) endGame("超時"); } },1000); }
+        function updateTimerUI() {
+            document.getElementById('timer-bottom').className = (turn === myRole) ? 'timer active' : 'timer';
+            document.getElementById('timer-top').className = (turn !== myRole) ? 'timer active' : 'timer';
+            const fmt = (s) => (s > 3600) ? "∞" : Math.floor(s/60) + ":" + (s%60).toString().padStart(2,'0');
+            document.getElementById('time-bottom-txt').innerText = fmt(timeLeft[myRole]);
+            let opp = (myRole==='R'?'B':'R'); document.getElementById('time-top-txt').innerText = fmt(timeLeft[opp]);
+        }
+        
+        // --- 10. 按鈕功能 (修正編輯模式) ---
+        function toggleEditMode() { 
+            mode = (mode === 'play' ? 'edit' : 'play'); 
+            document.getElementById('edit-panel').style.display = (mode === 'edit' ? 'block' : 'none'); 
+            document.getElementById('edit-btn').innerText = (mode === 'edit' ? '✅ 完成擺譜' : '🔧 擺設棋譜'); 
+            selected = null; 
+            if (mode === 'play') {
+                if (globalConn && globalConn.open) globalConn.send({ type: 'syncBoard', board: board });
+                checkGameState(); // 擺完馬上檢查死棋
+                draw();
+            }
+        }
+        function resign() { 
+            if(globalConn && globalConn.open) globalConn.send({ type: 'resign', reason: "對手認輸" });
+            // 我認輸 = 對手贏
+            let winner = (myRole === 'R' ? "黑方勝" : "紅方勝");
+            endGame("認 輸", winner); 
+        }
+        window.addEventListener('resize', initCanvas);
+    
+    function sendChatMessage() {
+        const input = document.getElementById('chat-input');
+        const msg = input.value.trim();
+        if (!msg) return;
+    
+        // 1. 顯示在自己的畫面上
+        appendMessage("我", msg, "#4caf50");
+    
+        // 2. 透過連線發送給對方
+        if (globalConn && globalConn.open) {
+            globalConn.send({ type: 'chat', msg: msg });
+        }
+        
+        input.value = ""; // 清空輸入框
+    }
+    
+    // 輔助函數：將文字渲染到聊天視窗
+    function appendMessage(sender, text, color) {
+        const container = document.getElementById('chat-messages');
+        if(!container) return;
+        const msgDiv = document.createElement('div');
+        msgDiv.style.marginBottom = "4px";
+        msgDiv.innerHTML = `<span style="color:${color}; font-weight:bold;">${sender}:</span> <span style="color:white;">${text}</span>`;
+        container.appendChild(msgDiv);
+        container.scrollTop = container.scrollHeight; // 自動捲動到最下面
+    }
+    </script>
+    
+    
+    
+    
+    
+    <script>
+    
+    // --- 11. 連線功能 (穩定通訊 & 自定義對話框版) ---
+    
+    // 1. 初始化 4 碼 ID (自動產生，不跳彈窗)
+    var myShortId = Math.floor(1000 + Math.random() * 9000).toString();
+    var peer = new Peer(myShortId); 
+    var globalConn = null;
+    var animatingPiece = null;
+    
+    // 2. ID 顯示與畫面控制
+    peer.on('open', function(id) {
+        var idElem = document.getElementById('display-id');
+        if (idElem) idElem.innerText = id;
+        
+        var loginScreen = document.getElementById('login-screen');
+        if (loginScreen) {
+            loginScreen.style.display = 'flex';
+            loginScreen.style.zIndex = '9999'; 
+        }
+    });
+    
+    // 3. 接收連線
+    peer.on('connection', function(conn) {
+        globalConn = conn;
+        setupCommunication(); 
+        updateStatus("狀態：朋友已連入！");
+    });
+    
+    // 4. 連接朋友
+    function connectToFriend() {
+        var fId = document.getElementById('friend-id').value.trim();
+        if (!fId) return alert("請輸入對手的 4 碼 ID");
+        globalConn = peer.connect(fId);
+        setupCommunication();
+        updateStatus("狀態：嘗試連線中...");
+    }
+    
+    // 5. 核心監聽 (改用自定義 UI，解決秒拒絕問題)
+    function setupCommunication() {
+        if (!globalConn) return;
+    
+        globalConn.on('open', function() {
+            updateStatus("狀態：連線成功！");
+        });
+    
+        globalConn.on('data', function(data) {
+            console.log("收到數據:", data);
+            if (data.type === 'syncBoard') {
+                board = data.board;
+                draw();
+                if (typeof checkGameState === "function") checkGameState();
+            } 
+            else if (data.type === 'move') {
+                executeMove(data.move[0], data.move[1], data.move[2], data.move[3]);
+            } 
+            else if (data.type === 'chat') {
+                appendMessage("對手", data.msg, "#ff9800"); 
+            }
+            else if (data.type === 'offerDraw') {
+                showDrawUI(); // 調用自定義求和畫面，不使用 confirm()
+            }
+            else if (data.type === 'acceptDraw') {
+                endGame("對方同意求和", "和局");
+            }
+            else if (data.type === 'declineDraw') {
+                alert("對方拒絕了和棋提議。");
+            }
+            else if (data.type === 'resign') {
+                endGame("對手認輸");
+            }
+        });
+    }
+    
+    // 6. 自定義求和對話框 (解決秒拒絕問題的關鍵)
+    function showDrawUI() {
+        if (document.getElementById('custom-draw-box')) return;
+        const box = document.createElement('div');
+        box.id = "custom-draw-box";
+        box.style = "position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#2c3e50; padding:30px; border:4px solid #f39c12; border-radius:20px; z-index:10000; text-align:center; box-shadow: 0 0 30px rgba(0,0,0,0.8); min-width:280px;";
+        box.innerHTML = `
+            <h2 style="color:#f1c40f; margin:0 0 20px 0; font-size:24px;">🤝 和棋提議</h2>
+            <p style="color:white; font-size:18px; margin-bottom:25px;">對方提議和棋，你接受嗎？</p>
+            <div style="display:flex; gap:15px; justify-content:center;">
+                <button id="draw-yes" style="background:#27ae60; color:white; border:none; padding:12px 25px; border-radius:10px; font-size:18px; cursor:pointer; font-weight:bold;">同意</button>
+                <button id="draw-no" style="background:#c0392b; color:white; border:none; padding:12px 25px; border-radius:10px; font-size:18px; cursor:pointer; font-weight:bold;">拒絕</button>
+            </div>
+        `;
+        document.body.appendChild(box);
+    
+        document.getElementById('draw-yes').onclick = () => {
+            globalConn.send({ type: 'acceptDraw' });
+            box.remove();
+            endGame("雙方和棋", "和局");
+        };
+        document.getElementById('draw-no').onclick = () => {
+            globalConn.send({ type: 'declineDraw' });
+            box.remove();
+        };
+    }
+    
+    // 7. 修復和棋發送
+    function offerDraw() {
+        if (globalConn && globalConn.open) {
+            globalConn.send({ type: 'offerDraw' }); 
+            updateStatus("狀態：已送出求和請求...");
+        } else {
+            alert("尚未連線！");
+        }
+    }
+    
+    // 8. 修正移動執行與將軍檢查
+    function executeMove(x1, y1, x2, y2) {
+        if (!board || !board[y1]) return;
+        var p = board[y1][x1], old = board[y2][x2], isCapture = (old !== '.');
+        board[y2][x2] = p; board[y1][x1] = '.';
+    
+        if (isCapture) {
+            playFunnySound();
+            var start = null;
+            function step(timestamp) {
+                if (!start) start = timestamp;
+                var progress = (timestamp - start) / 600;
+                if (progress < 1) {
+                    animatingPiece = { lx: x2, ly: y2, scale: 1 + Math.sin(progress * Math.PI) * 0.5, rotate: progress * Math.PI * 4 };
+                    draw(); requestAnimationFrame(step);
+                } else { animatingPiece = null; draw(); }
+            }
+            requestAnimationFrame(step);
+        }
+        
+        turn = (turn === 'R' ? 'B' : 'R');
+        if (typeof playSound === "function") playSound(isCapture ? 'cap' : 'move');
+        
+        // 確保將軍判定運作
+        if (typeof checkGameState === "function") checkGameState();
+        if (!isCapture) draw(); 
+    }
+    
+    function updateStatus(msg) {
+        var statusElem = document.getElementById('conn-status');
+        if (statusElem) statusElem.innerText = msg;
+    }
+    
+   function playFunnySound() {
+    // 1. 將網址替換成你的完整檔案名稱 (注意副檔名必須是 .mp3)
+    var audio = new Audio('eat.mp3');
+    
+    // 2. 音量建議設定為 1.0 (最大值)，設為 2 在某些瀏覽器可能會失效
+    audio.volume = 1.0; 
+    
+    // 3. 執行播放
+    audio.play().catch(function(err){
+        console.log("音效播放失敗，可能是因為檔名錯誤或檔案不在同一個資料夾:", err);
+    });
+}
+    </script>
+    </body>
+    </html>
